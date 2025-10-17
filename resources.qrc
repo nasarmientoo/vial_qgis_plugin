@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/vial">
+    <file>icons/vial.svg</file>
+    <file>icons/tool1.svg</file>
+    <file>icons/tool2.svg</file>
+    <file>icons/tool3.svg</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,16 @@
+[general]
+name=Vial
+qgisMinimumVersion=3.22
+qgisMaximumVersion=3.99
+description=Vial: toolbar & Processing provider with three tools.
+about=Navbar dropdown + Processing provider with three QgsProcessingAlgorithm tools.
+version=1.0.0
+author=Nataly Sarmiento Ospina & Maria Fernanda Molina
+email=nasarmientoo@gmail.com
+homepage=
+tracker=
+repository=
+category=Analysis
+icon=icons/vial.svg
+experimental=False
+deprecated=False
