@@ -19,9 +19,11 @@ from qgis.core import (
     QgsVectorLayer,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    Qgis
 )
 from qgis import processing
-
+from ..utils_common.road_chain_merger import merge_lines_to_dissolved
+from .ensure_dependency import ensure_docker_sdk
 # ---------------- Sat2Graph docker automation ----------------
 # Asegúrate de que docker_automation.py esté en el mismo paquete (sat2graph_core)
 try:
@@ -239,6 +241,7 @@ def run_sat2graph_raster(
       2) Inicializar/arrancar contenedor Sat2Graph.
       3) Enviar tile a la API → obtener JSON de edges.
       4) Convertir JSON a capa vectorial en CRS del raster.
+      5) Post-procesar: merge de segmentos alineados → salida final disuelta.
     """
     # Feedback dummy si no viene
     if feedback is None:
@@ -249,16 +252,25 @@ def run_sat2graph_raster(
             def reportError(self, m, fatal=False): print("ERROR:", m)
         feedback = _Dummy()  # type: ignore
 
+    # Validaciones básicas
     if raster_layer is None or not raster_layer.isValid():
         raise ValueError("Raster layer inválido.")
+    if raster_layer.crs().isGeographic():
+        feedback.pushWarning("El CRS del raster debe ser proyectado (metros). Reproyecta antes de ejecutar.")
 
-    # 1) Exportar tile temporal
+    # 0) SDK de Docker disponible
+    if not ensure_docker_sdk(lambda m: feedback.pushWarning(m)):
+        feedback.pushWarning("Docker SDK no disponible. Se devolverá una capa vacía.")
+        v_stub = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
+        v_stub.updateExtents()
+        return v_stub
+
+    # 1) Exportar tile & GSD
     try:
         out_tif, gsd = export_raster_tile(raster_layer, extent)
         feedback.pushInfo(f"[Vial] Tile exportado: {out_tif} | GSD≈{gsd:.3f} m/px")
     except Exception as e:
         feedback.reportError(f"[Vial] Error exportando tile: {e}", fatal=True)
-        # devolver capa vacía para no romper Processing
         v_stub = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
         v_stub.updateExtents()
         return v_stub
@@ -274,7 +286,7 @@ def run_sat2graph_raster(
 
         # 2.1 Docker up?
         if not mgr.initialize_docker():
-            feedback.pushWarning("[Vial] Docker no está disponible. Instala/arranca Docker Desktop.")
+            feedback.pushWarning("[Vial] Docker no está disponible. Abre Docker Desktop.")
         else:
             # 2.2 ¿Servidor ya listo?
             ready = mgr.is_container_running()
@@ -290,25 +302,39 @@ def run_sat2graph_raster(
             # 2.4 Inferencia
             if ready:
                 try:
+                    # Puedes forzar gsd=1.0 si tu modelo lo requiere fijo
                     json_path = mgr.extract_roads(out_tif, gsd=gsd, model_id=model_id, allow_retry=True)
                 except Exception as e:
                     feedback.pushWarning(f"[Vial] Error durante la inferencia: {e}")
 
-    # 3) Construcción de capa de salida
+    # 3) Construcción de capa de líneas (crs del raster)
     try:
         if json_path and os.path.exists(json_path):
             feedback.pushInfo(f"[Vial] Leyendo edges desde: {json_path}")
-            vlayer = json_edges_to_layer(json_path, raster_layer.crs(), raster_layer)
+            vlines_raw = json_edges_to_layer(json_path, raster_layer.crs(), raster_layer)
         else:
             feedback.pushWarning("[Vial] No se obtuvo JSON de aristas; se devolverá capa vacía.")
-            vlayer = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
-            vlayer.updateExtents()
+            vlines_raw = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
+            vlines_raw.updateExtents()
     except Exception as e:
         feedback.reportError(f"[Vial] Error construyendo la capa de salida: {e}")
-        vlayer = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
-        vlayer.updateExtents()
+        vlines_raw = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
+        vlines_raw.updateExtents()
 
-    # 4) Limpieza de temporales
+    # 4) Post-procesado: merge/dissolve de segmentos alineados
+    try:
+        feedback.pushInfo("[Vial] Uniendo segmentos alineados (chain-merge)…")
+        v_final = merge_lines_to_dissolved(
+            vlines_raw,
+            snap_tol_m=1.0,         # ajusta si necesitas
+            angle_thresh_deg=15.0,  # ajusta si necesitas
+            final_name="Raster_calles_union",
+        )
+    except Exception as e:
+        feedback.pushWarning(f"[Vial] Falló el chain-merging: {e}. Se devuelve la capa cruda.")
+        v_final = vlines_raw
+
+    # 5) Limpieza de temporales
     try:
         if cleanup:
             if os.path.isfile(out_tif):
@@ -319,13 +345,4 @@ def run_sat2graph_raster(
     except Exception:
         pass
 
-    return vlayer
-
-
-def run_sat2graph_raster_vector(raster_layer, vector_layer, context, feedback):
-    # TODO: implement your combined flow (e.g., mask by vector, clip to extent, etc.)
-    raise NotImplementedError("Implement raster+vector path")
-
-def run_sat2graph_vector_only(vector_layer, context, feedback):
-    # TODO: implement vector-only behavior
-    raise NotImplementedError("Implement vector-only path")
+    return v_final
