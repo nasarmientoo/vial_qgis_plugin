@@ -4,6 +4,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMenu, QToolButton
 from qgis.core import QgsApplication
 from qgis import processing
+from qgis.gui import QgsGui
 
 from .processing.provider import VialProvider
 from . import resources_rc  # ensure compiled resources are loaded
@@ -23,10 +24,11 @@ class VialPlugin(object):
 
     # ---------- QGIS lifecycle ----------
     def initGui(self):
+        
         # 1) Register Processing provider (QGIS 3.42: use QgsApplication.processingRegistry())
         self.provider = VialProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
-
+    
         # 2) Build submenu under Plugins
         self.menu = QMenu('Vial', self.iface.mainWindow())
         self.menu.setIcon(QIcon(':/vial/icons/vial.svg'))
@@ -64,6 +66,7 @@ class VialPlugin(object):
         self.actions['tool1'] = a1
         self.actions['tool2'] = a2
         self.actions['tool3'] = a3
+
 
     def unload(self):
         # Remove toolbar and menu
