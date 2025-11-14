@@ -49,7 +49,7 @@ class VialToolOneAlg(QgsProcessingAlgorithm):
             "Herramienta para la conformación automática y asistida de la red vial a partir de diferentes fuentes.\n\n"
             "• Caso 1 — Desde raster (Sat2Graph): Extrae la malla vial a partir de una imagen satelital o raster. "
             "Requiere entorno Docker con dependencias de visión por computador. "
-            "Basado en el trabajo *Sat2Graph: Road Graph Extraction through Graph-Tensor Encoding* (He et al.), disponible en: https://github.com/songtaohe/Sat2Graph\n\n"
+            "Basado en el trabajo Sat2Graph: Road Graph Extraction through Graph-Tensor Encoding (He et al.), disponible en: https://github.com/songtaohe/Sat2Graph\n\n"
             "• Caso 2 — Desde base predial: Genera la red vial a partir de predios urbanos y, opcionalmente, límites municipales, "
             "usando relaciones geométricas y topológicas entre polígonos.\n\n"
             "• Caso 3 — Integración de mallas viales: Fusiona varias capas de líneas priorizadas (por ejemplo, OSM e insumos institucionales) "

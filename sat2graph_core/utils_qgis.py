@@ -4,7 +4,7 @@
 import json
 import os
 import tempfile
-from typing import Optional, Tuple, Union, Callable
+from typing import Optional, Tuple, Union, Callable, Any
 
 from qgis.PyQt.QtCore import QVariant
 from qgis.core import (
@@ -206,20 +206,39 @@ def json_edges_to_layer(
 # ---------------------------------------------------------------------
 # Helpers para conectar feedback de QGIS al manager docker
 # ---------------------------------------------------------------------
-def _feedback_callback(feedback: QgsProcessingFeedback) -> Callable[[str], None]:
+
+def _check_cancel(feedback: QgsProcessingFeedback, mgr: Any = None):
     """
-    Convierte mensajes del manager docker a feedback de QGIS.
+    If the user cancels the QGIS Processing task, optionally stop the
+    Sat2Graph Docker container (if provided) and abort execution.
+    """
+    if isinstance(feedback, QgsProcessingFeedback) and feedback.isCanceled():
+        # Best-effort: stop container so the HTTP connection / inference is interrupted
+        if mgr is not None and hasattr(mgr, "stop_container"):
+            try:
+                mgr.stop_container()
+            except Exception:
+                # Do not crash on stop errors; just continue with cancellation
+                pass
+        raise Exception("Sat2Graph processing canceled by user.")
+
+
+def _feedback_callback(
+    feedback: QgsProcessingFeedback,
+    mgr: Any = None
+) -> Callable[[str], None]:
+    """
+    Convierte mensajes del manager docker a feedback de QGIS y
+    chequea si el usuario canceló el algoritmo.
     """
     def _cb(msg: str):
-        try:
-            if isinstance(feedback, QgsProcessingFeedback):
-                feedback.pushInfo(str(msg))
-            else:
-                print(str(msg))
-        except Exception:
+        # If the user canceled from the QGIS dialog, stop docker and abort
+        _check_cancel(feedback, mgr)
+        if isinstance(feedback, QgsProcessingFeedback):
+            feedback.pushInfo(str(msg))
+        else:
             print(str(msg))
     return _cb
-
 
 # ---------------------------------------------------------------------
 # Puente usado por el algoritmo de Processing (Tool 1)
@@ -241,7 +260,7 @@ def run_sat2graph_raster(
       2) Inicializar/arrancar contenedor Sat2Graph.
       3) Enviar tile a la API → obtener JSON de edges.
       4) Convertir JSON a capa vectorial en CRS del raster.
-      5) Post-procesar: merge de segmentos alineados → salida final disuelta.
+      5) (Actual) Omitir merge y devolver la capa cruda de edges.
     """
     # Feedback dummy si no viene
     if feedback is None:
@@ -279,32 +298,40 @@ def run_sat2graph_raster(
 
     # 2) Docker pipeline
     if not _HAS_DOCKER_AUTOMATION or Sat2GraphDockerManager is None:
-        feedback.pushWarning("[Vial] docker_automation.py no disponible. Devuelvo capa vacía.")
+            feedback.pushWarning("[Vial] docker_automation.py no disponible. Devuelvo capa vacía.")
     else:
         mgr = Sat2GraphDockerManager()
-        mgr.add_status_callback(_feedback_callback(feedback))
+        # Callback enviará mensajes a QGIS y también permitirá cancelar Docker si el usuario lo solicita
+        mgr.add_status_callback(_feedback_callback(feedback, mgr))
 
         # 2.1 Docker up?
+        _check_cancel(feedback, mgr)
         if not mgr.initialize_docker():
             feedback.pushWarning("[Vial] Docker no está disponible. Abre Docker Desktop.")
         else:
             # 2.2 ¿Servidor ya listo?
+            _check_cancel(feedback, mgr)
             ready = mgr.is_container_running()
             if not ready:
                 # 2.3 Pull si falta imagen y arranque
+                _check_cancel(feedback, mgr)
                 if not mgr.pull_image():
                     feedback.pushWarning("[Vial] No se pudo descargar la imagen Docker.")
-                elif not mgr.start_container():
-                    feedback.pushWarning("[Vial] No se pudo iniciar el contenedor Sat2Graph.")
                 else:
-                    ready = True
+                    _check_cancel(feedback, mgr)
+                    if not mgr.start_container():
+                        feedback.pushWarning("[Vial] No se pudo iniciar el contenedor Sat2Graph.")
+                    else:
+                        ready = True
 
             # 2.4 Inferencia
             if ready:
+                _check_cancel(feedback, mgr)
                 try:
                     # Puedes forzar gsd=1.0 si tu modelo lo requiere fijo
                     json_path = mgr.extract_roads(out_tif, gsd=gsd, model_id=model_id, allow_retry=True)
                 except Exception as e:
+                    # Si la excepción viene de una cancelación, ya se manejó en _check_cancel
                     feedback.pushWarning(f"[Vial] Error durante la inferencia: {e}")
 
     # 3) Construcción de capa de líneas (crs del raster)
@@ -321,18 +348,27 @@ def run_sat2graph_raster(
         vlines_raw = QgsVectorLayer(f"LineString?crs={raster_layer.crs().authid()}", "Vial_Graph", "memory")
         vlines_raw.updateExtents()
 
-    # 4) Post-procesado: merge/dissolve de segmentos alineados
+    # 4) Skip post-processing: keep raw Sat2Graph edges
     try:
-        feedback.pushInfo("[Vial] Uniendo segmentos alineados (chain-merge)…")
-        v_final = merge_lines_to_dissolved(
-            vlines_raw,
-            snap_tol_m=1.0,         # ajusta si necesitas
-            angle_thresh_deg=15.0,  # ajusta si necesitas
-            final_name="Raster_calles_union",
-        )
-    except Exception as e:
-        feedback.pushWarning(f"[Vial] Falló el chain-merging: {e}. Se devuelve la capa cruda.")
+        feedback.pushInfo("[Vial] Skipping merge: returning raw Sat2Graph edges…")
         v_final = vlines_raw
+        v_final.setName("Raster_calles")
+    except Exception as e:
+        feedback.pushWarning(f"[Vial] Failed preparing raw layer: {e}. Se devuelve la capa cruda.")
+        v_final = vlines_raw
+
+    # 4) Post-procesado: merge/dissolve de segmentos alineados
+    # try:
+    #     feedback.pushInfo("[Vial] Uniendo segmentos alineados (chain-merge)…")
+    #     v_final = merge_lines_to_dissolved(
+    #         vlines_raw,
+    #         snap_tol_m=1.0,         # ajusta si necesitas
+    #         angle_thresh_deg=15.0,  # ajusta si necesitas
+    #         final_name="Raster_calles_union",
+    #     )
+    # except Exception as e:
+    #     feedback.pushWarning(f"[Vial] Falló el chain-merging: {e}. Se devuelve la capa cruda.")
+    #     v_final = vlines_raw
 
     # 5) Limpieza de temporales
     try:

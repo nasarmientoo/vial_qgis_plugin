@@ -7,8 +7,8 @@ from qgis import processing
 from qgis.gui import QgsGui
 
 from .processing.provider import VialProvider
-from . import resources_rc  # ensure compiled resources are loaded
-
+from . import resources_rc  
+from .gui.attr_editor_dock import VialAttrEditorDock 
 
 class VialPlugin(object):
     def __init__(self, iface):
@@ -21,6 +21,7 @@ class VialPlugin(object):
         self.dropdownBtn = None
 
         self.actions = {}
+        self.attrDock = None 
 
     # ---------- QGIS lifecycle ----------
     def initGui(self):
@@ -39,7 +40,7 @@ class VialPlugin(object):
 
         # Open standard Processing parameter dialogs
         a1.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_one'))
-        a2.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_two'))
+        a2.triggered.connect(self.toggle_attr_editor)
         a3.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_three'))
 
         self.menu.addAction(a1)
@@ -67,6 +68,20 @@ class VialPlugin(object):
         self.actions['tool2'] = a2
         self.actions['tool3'] = a3
 
+        a2.setCheckable(True)
+        a2.toggled.connect(self.toggle_attr_editor)
+
+    def toggle_attr_editor(self, checked=None):
+        if self.attrDock is None:
+            self.attrDock = VialAttrEditorDock(self.iface, self.iface.mainWindow())
+            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.attrDock)
+            # sincroniza cuando el usuario cierra el dock con la X
+            self.attrDock.visibilityChanged.connect(lambda v: self.actions['tool2'].setChecked(v))
+        if checked is None:
+            checked = not self.attrDock.isVisible()
+        self.attrDock.setVisible(checked)
+        if checked:
+            self.attrDock.raise_()
 
     def unload(self):
         # Remove toolbar and menu
@@ -76,8 +91,10 @@ class VialPlugin(object):
         if self.menu:
             self.iface.pluginMenu().removeAction(self.menu.menuAction())
             self.menu = None
-
         # Unregister Processing provider
         if self.provider:
             QgsApplication.processingRegistry().removeProvider(self.provider)
             self.provider = None
+        if self.attrDock:
+            self.iface.removeDockWidget(self.attrDock)
+            self.attrDock = None
