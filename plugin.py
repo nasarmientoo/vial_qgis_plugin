@@ -7,6 +7,7 @@ from qgis import processing
 from qgis.gui import QgsGui
 from .processing.provider import VialProvider
 from . import resources_rc  
+from .attr_editor_core.core import AttrEditorCore
 
 class VialPlugin(object):
     def __init__(self, iface):
@@ -17,8 +18,14 @@ class VialPlugin(object):
         self.menu = None
         self.toolbar = None
         self.dropdownBtn = None
+        self.tool2_core = None
 
         self.actions = {}
+
+    def _open_tool2_attr_editor(self):
+        if self.tool2_core is None:
+            self.tool2_core = AttrEditorCore(self.iface)
+        self.tool2_core.start()
 
     # ---------- QGIS lifecycle ----------
     def initGui(self):
@@ -37,7 +44,7 @@ class VialPlugin(object):
 
         # Open standard Processing parameter dialogs
         a1.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_one'))
-        a2.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_two'))
+        a2.triggered.connect(self._open_tool2_attr_editor)
         a3.triggered.connect(lambda: processing.execAlgorithmDialog('vial:tool_three'))
 
         self.menu.addAction(a1)
