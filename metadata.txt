@@ -1,0 +1,16 @@
+[general]
+name=Editor de Atributos de Arco Vial
+qgisMinimumVersion=3.22
+qgisMaximumVersion=3.99
+description=Edita, valida y normaliza los atributos de nomenclatura de una red vial según normativa colombiana.
+about=Herramienta standalone para estandarizar atributos de arcos viales: mapeo de campos, validación por campo, detección de calles contiguas y cálculo de vía generadora.
+version=1.0.0
+author=Nataly Sarmiento Ospina & Maria Fernanda Molina
+email=nasarmientoo@gmail.com
+homepage=
+tracker=
+repository=
+category=Analysis
+icon=icons/tool2.svg
+experimental=False
+deprecated=False
